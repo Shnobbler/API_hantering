@@ -4,11 +4,13 @@ import mysql.connector
 from mysql.connector import Error
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, get_jwt
+from datetime import timedelta
 
 
 app = Flask(__name__)
 
 app.config['JWT_SECRET_KEY'] = 'your_jwt_secret_key'
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 
 jwt = JWTManager(app)
 
@@ -30,18 +32,36 @@ def get_db_connection():
 
 @app.route('/', methods=['GET'])
 def index():
-    return '''<h1>Documentation</h1>  <ul><li>GET /users</li></ul>'''
+    return ''' <h1>Välkommen till min API!</h1>
+    <h2>ROUTES: </h2>
+    <ul>
+        <li> GET /users - hämta alla users - kräver inloggning (token)</li>
+        <li> GET /users/&lt;id&gt; - hämta user med id - kräver inloggning (token)</li>
+        <li> POST /users - skapa en user - kräver inloggning (token)</li>
+        <li> POST /login - logga in och få en token </li>
+        <li> POST /register - registrera en ny user </li>
+        <li> PUT /users/&lt;id&gt; - uppdatera user med id - kräver inloggning (token)</li>
+        <li> GET /protected - skyddad route - kräver inloggning (token)</li>
+    </ul>
+'''
 
 @app.route('/users', methods=['GET'])
 @jwt_required()
 def get_users():
     """Get all users"""
     connection = get_db_connection()
+    if not connection:
+        return jsonify({"error": "Database connection failed"}), 500
+
     cursor = connection.cursor(dictionary=True)
-    sql = "SELECT * FROM users"
+    sql = "SELECT id, username, email, name FROM users"
     cursor.execute(sql)
     users = cursor.fetchall()
-   
+
+    if not users:
+        return jsonify({"error": "User not found"}), 404
+    
+    connection.close()
     return jsonify(users)
 
 # @app.route('/users', methods=['GET'])
@@ -58,11 +78,19 @@ def get_users():
 def get_user(user_id):
     """Get all users"""
     connection = get_db_connection()
+    if not connection:
+        return jsonify({"error": "Database connection failed"}), 500
+    
     cursor = connection.cursor(dictionary=True)
     # hämta ENDAST user med id
-    sql = "SELECT * FROM users WHERE id = %s"
+    sql = "SELECT id, username, email, name FROM users WHERE id = %s"
     cursor.execute(sql, (user_id,))
     user = cursor.fetchone()
+
+    connection.close()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
    
     return jsonify(user)
 
@@ -78,13 +106,14 @@ def create_user():
         if data and 'username' in data and 'password' in data and 'email' in data and 'name' in data: # Verifierar att username skickats
             username = data.get('username')
             password = data.get('password')
+            hashed_password = generate_password_hash(password)
             email = data.get('email')
             name = data.get('name')
             connection = get_db_connection()
             
             cursor = connection.cursor()
             sql = "INSERT INTO users (username, password, email, name) VALUES (%s, %s, %s, %s)"
-            cursor.execute(sql, (username, password, email, name ))
+            cursor.execute(sql, (username, hashed_password, email, name ))
                 
             connection.commit() # commit() gör klart skrivningen till databasen
             user_id = cursor.lastrowid # cursor.lastrowid innehåller id på raden som skapades i DB
@@ -96,7 +125,12 @@ def create_user():
             # 'email': email,
             # 'name': name
             # }
-            return jsonify({"message": "User created", "id": 123}), 201
+            return jsonify({
+                "id": user_id,
+                "username": username,
+                "email": email,
+                "name": name
+            }), 201
         else:
             # Returnera ett JSON-objekt med felmeddelandet och statuskod 422
             return jsonify({"error": "Sum Ting Wong, Ho Lee Fuk"}), 422
@@ -134,6 +168,9 @@ def get_cars():
 def update_user(user_id):
     try:
         connection = get_db_connection()
+        if not connection:
+            return jsonify({"error": "Database connection failed"}), 500
+        
         cursor = connection.cursor(dictionary=True)
             # 1. Hämta data från body (req.body)
         data = request.get_json(silent=True)
@@ -143,22 +180,33 @@ def update_user(user_id):
         password = data.get('password')
         email = data.get('email')
         name = data.get('name')            # skapa databaskoppling (kod bortklippt) och använd UPDATE för att uppdatera databasen
+
+        if not username or not password or not email or not name:
+            return jsonify({"error": "Alla fält måste skickas med"}), 400
+        
+        hashed_password = generate_password_hash(password)
+
         sql = """UPDATE users SET username = %s, password = %s, email = %s, name = %s WHERE id = %s"""
         
             # 3. Kör frågan med en tupel av värden
-        cursor.execute(sql, (username, password, email, name, user_id))
+        cursor.execute(sql, (username, hashed_password, email, name, user_id))
     
         connection.commit()
         if cursor.rowcount == 0:
-                return jsonify({"error": "Användaren hittades inte"}), 404
+            connection.close()
+            return jsonify({"error": "Användaren hittades inte"}), 404
+
+        sql_select = "SELECT id, username, email, name FROM users WHERE id = %s"
+        cursor.execute(sql_select, (user_id,))
+        updated_user = cursor.fetchone()
 
         connection.close()
 
-        return jsonify({"message": "Användare uppdaterad", "id": user_id}), 200
+        return jsonify(updated_user), 200
 
     except Exception as err:
-            print(f"Error: {err}")
-            return jsonify({"error": "Something went wrong. Sorry!"}), 500
+        print(f"Error: {err}")
+        return jsonify({"error": "Something went wrong. Sorry!"}), 500
     
 @app.route('/register', methods=['POST'])
 def register():

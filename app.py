@@ -36,11 +36,12 @@ def index():
     <h2>ROUTES: </h2>
     <ul>
         <li> GET /users - hämta alla users - kräver inloggning (token)</li>
-        <li> GET /users/&lt;id&gt; - hämta user med id - kräver inloggning (token)</li>
+        <li> GET /users/&lt;id eller username&gt; - hämta user med id eller username - kräver inloggning (token)</li>
         <li> POST /users - skapa en user - kräver inloggning (token)</li>
         <li> POST /login - logga in och få en token </li>
         <li> POST /register - registrera en ny user </li>
         <li> PUT /users/&lt;id&gt; - uppdatera user med id - kräver inloggning (token)</li>
+        <li> DELETE /users/&lt;id&gt; - ta bort user med id - kräver inloggning (token)</li>
         <li> GET /protected - skyddad route - kräver inloggning (token)</li>
     </ul>
 '''
@@ -73,7 +74,7 @@ def get_users():
 #     ]
 #     return jsonify(users)
 
-@app.route('/users/<int:user_id>', methods=['GET'])
+@app.route('/users/<user_id>', methods=['GET'])
 @jwt_required()
 def get_user(user_id):
     """Get all users"""
@@ -83,8 +84,8 @@ def get_user(user_id):
     
     cursor = connection.cursor(dictionary=True)
     # hämta ENDAST user med id
-    sql = "SELECT id, username, email, name FROM users WHERE id = %s"
-    cursor.execute(sql, (user_id,))
+    sql = "SELECT id, username, email, name FROM users WHERE id = %s OR username = %s"
+    cursor.execute(sql, (user_id, user_id))
     user = cursor.fetchone()
 
     connection.close()
@@ -208,6 +209,32 @@ def update_user(user_id):
         print(f"Error: {err}")
         return jsonify({"error": "Something went wrong. Sorry!"}), 500
     
+@app.route('/users/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def delete_user(user_id):
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({"error": "Database connection failed"}), 500
+    
+    try:
+        cursor = connection.cursor()
+
+        sql = "DELETE FROM users WHERE id = %s"
+        cursor.execute(sql, (user_id,))
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            connection.close()
+            return jsonify({"error": "User not found"}), 404
+
+        connection.close()
+        return jsonify({"message": "User deleted successfully"}), 200
+
+    except Exception as err:
+        print(f"Error: {err}")
+        return jsonify({"error": "Something went wrong. Sorry!"}), 500
+    
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -265,6 +292,8 @@ def login():
     password = data.get('password')
    
     connection = get_db_connection()
+    if not connection:
+        return jsonify({"error": "Database connection failed"}), 500
        
     cursor = connection.cursor(dictionary=True)
     sql = "SELECT * FROM users WHERE username = %s"
